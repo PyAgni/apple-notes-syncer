@@ -16,7 +16,7 @@ A macOS CLI tool that exports Apple Notes to a Git repository as Markdown files,
 ## Prerequisites
 
 - **macOS** (required — uses AppleScript to access Notes)
-- **Go 1.22+** (for building from source)
+- **Go 1.26+** (for building from source)
 - **git** (configured with SSH key or token for your remote)
 - **rclone** (optional, only for Google Drive sync)
 
