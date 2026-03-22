@@ -1,0 +1,54 @@
+# apple-notes-sync configuration
+# Place this file at ~/.apple-notes-sync.yaml or specify with --config flag.
+
+# Required: path to the git repository where notes will be stored.
+repo_path: ~/Notes
+
+# Optional subdirectory within the repo for notes (empty = repo root).
+notes_subdir: ""
+
+# Git settings
+git:
+  enabled: true
+  remote: origin
+  branch: main
+  push: true
+
+# Rclone settings (Google Drive sync)
+rclone:
+  enabled: false
+  remote_name: gdrive      # Name of your rclone remote
+  remote_path: AppleNotes  # Path on the remote
+  extra_flags: []           # e.g. ["--verbose"]
+
+# Logging
+log:
+  level: info               # debug, info, warn, error
+  file: ""                  # Path to log file (empty = stderr only)
+  format: console           # console or json
+
+# Note filtering
+filter:
+  accounts: []              # Include only these accounts (empty = all)
+  exclude_accounts: []      # Exclude these accounts
+  folders: []               # Include only these folder paths (empty = all)
+  exclude_folders:           # Exclude these folder paths
+    - "Recently Deleted"
+  skip_protected: true      # Skip password-protected notes
+  skip_shared: false        # Skip shared notes
+
+# Attachment handling
+attachments:
+  enabled: true
+  max_size_mb: 50
+  dir: _attachments         # Subdirectory for attachments
+
+# Behavior
+dry_run: false              # Preview without writing or committing
+front_matter: true          # Add YAML front matter to note files
+clean_orphans: true         # Remove notes deleted from Apple Notes
+timeout: 120s               # AppleScript execution timeout
+
+# Commit message template (Go text/template)
+# Available fields: .Timestamp, .Written, .Total, .Skipped
+commit_template: "apple-notes-sync: {{.Timestamp}} | {{.Written}} notes synced"
