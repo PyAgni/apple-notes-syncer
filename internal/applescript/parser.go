@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agni/apple-notes-sync/internal/model"
+	"github.com/PyAgni/apple-notes-syncer/internal/model"
 )
 
 const (

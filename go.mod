@@ -1,4 +1,4 @@
-module github.com/agni/apple-notes-sync
+module github.com/PyAgni/apple-notes-syncer
 
 go 1.26.1
 
