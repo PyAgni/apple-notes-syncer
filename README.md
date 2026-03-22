@@ -315,15 +315,6 @@ rclone sync ~/Notes gdrive:AppleNotes --dry-run
 | Unicode errors in dates | Already handled — the parser normalizes Unicode whitespace from macOS locales |
 | "repo_path is required" | Set `repo_path` in your config file or pass `--repo-path` |
 
-## Alternatives
-
-| Tool | Git auto-commit | Scheduled | rclone | Bidirectional | Language |
-|------|-----------------|-----------|--------|---------------|----------|
-| **apple-notes-sync** | Yes | Yes (launchd) | Yes | No | Go |
-| [notes2md](https://github.com/vacekj/notes2md) | No | No | No | No | Rust |
-| [apple-cloud-notes-parser](https://github.com/threeplanetssoftware/apple_cloud_notes_parser) | No | No | No | No | Ruby |
-| [Bear/Stash](https://github.com/andymatuschak/Bear-Markdown-Export) | No | No | No | No | Swift |
-
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
