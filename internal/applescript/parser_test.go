@@ -174,6 +174,29 @@ func TestParseAppleScriptDate_WithoutDayOfWeek(t *testing.T) {
 	assert.Equal(t, 18, d.Day())
 }
 
+func TestParseAppleScriptDate_UKIndianLocale(t *testing.T) {
+	d, err := ParseAppleScriptDate("Wednesday, 18 March 2026 at 4:39:41 PM")
+	require.NoError(t, err)
+	assert.Equal(t, 2026, d.Year())
+	assert.Equal(t, 3, int(d.Month()))
+	assert.Equal(t, 18, d.Day())
+	assert.Equal(t, 16, d.Hour())
+}
+
+func TestParseAppleScriptDate_NarrowNoBreakSpace(t *testing.T) {
+	// macOS inserts \u202f (narrow no-break space) before AM/PM.
+	d, err := ParseAppleScriptDate("Wednesday, 18 March 2026 at 4:39:41\u202fPM")
+	require.NoError(t, err)
+	assert.Equal(t, 2026, d.Year())
+	assert.Equal(t, 16, d.Hour())
+}
+
+func TestNormalizeWhitespace(t *testing.T) {
+	assert.Equal(t, "4:39 PM", normalizeWhitespace("4:39\u202fPM"))
+	assert.Equal(t, "no change", normalizeWhitespace("no change"))
+	assert.Equal(t, "a b", normalizeWhitespace("a\u00a0b"))
+}
+
 func TestParseAppleScriptDate_InvalidFormat(t *testing.T) {
 	_, err := ParseAppleScriptDate("not a date at all")
 	require.Error(t, err)

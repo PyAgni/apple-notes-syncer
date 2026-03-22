@@ -129,9 +129,15 @@ var appleScriptDateFormats = []string{
 	"1/2/2006, 3:04:05 PM",
 	// Another common variant: "2 January 2006 at 15:04:05"
 	"2 January 2006 at 15:04:05",
+	// UK/Indian locale: "Monday, 2 January 2006 at 3:04:05 PM"
+	"Monday, 2 January 2006 at 3:04:05 PM",
+	// UK/Indian without day of week: "2 January 2006 at 3:04:05 PM"
+	"2 January 2006 at 3:04:05 PM",
 	// Date-only formats as fallback.
 	"Monday, January 2, 2006",
 	"January 2, 2006",
+	"Monday, 2 January 2006",
+	"2 January 2006",
 }
 
 // ParseAppleScriptDate attempts to parse a date string from AppleScript output.
@@ -141,6 +147,9 @@ func ParseAppleScriptDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	// Strip "date " prefix that AppleScript sometimes includes.
 	s = strings.TrimPrefix(s, "date ")
+	// Normalize Unicode whitespace characters (e.g. narrow no-break space \u202f)
+	// that macOS inserts before AM/PM in some locales.
+	s = normalizeWhitespace(s)
 
 	for _, format := range appleScriptDateFormats {
 		t, err := time.Parse(format, s)
@@ -150,6 +159,22 @@ func ParseAppleScriptDate(s string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("unable to parse date %q: no matching format found", s)
+}
+
+// normalizeWhitespace replaces Unicode whitespace characters (such as the
+// narrow no-break space \u202f that macOS inserts before AM/PM) with regular spaces.
+func normalizeWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\u202f', '\u00a0', '\u2009', '\u200a':
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // truncate shortens a string to maxLen characters for display in error messages.
