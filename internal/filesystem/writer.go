@@ -56,26 +56,23 @@ func NewFSNoteWriter(basePath, notesSubdir string, frontMatter bool, attachmentD
 	}
 }
 
-// frontMatterTemplate is the YAML front matter template for note files.
-var frontMatterTemplate = template.Must(template.New("frontmatter").Parse(`---
-title: "{{.Title}}"
-id: "{{.ID}}"
-created: {{.Created}}
-modified: {{.Modified}}
-account: "{{.Account}}"
-shared: {{.Shared}}
+// metadataTableTemplate renders a Markdown table with note metadata,
+// placed at the bottom of the file after a horizontal rule.
+var metadataTableTemplate = template.Must(template.New("metadata").Parse(`
 ---
 
+| ID | Created | Modified | Account | Shared |
+|----|---------|----------|---------|--------|
+| {{.ID}} | {{.Created}} | {{.Modified}} | {{.Account}} | {{.Shared}} |
 `))
 
-// frontMatterData holds the template data for front matter rendering.
-type frontMatterData struct {
-	Title    string
+// metadataData holds the template data for the metadata table.
+type metadataData struct {
 	ID       string
 	Created  string
 	Modified string
 	Account  string
-	Shared   bool
+	Shared   string
 }
 
 // notesDir returns the absolute path to the notes directory.
@@ -104,27 +101,37 @@ func (w *FSNoteWriter) WriteNote(ctx context.Context, note *model.Note) (string,
 	fileName := note.SanitizedFileName() + ".md"
 	fullPath := filepath.Join(dirPath, fileName)
 
-	// Build file content.
+	// Build file content: title heading, body, then metadata table at bottom.
 	var content strings.Builder
 
+	// Title as a top-level heading.
+	content.WriteString("# ")
+	content.WriteString(note.Name)
+	content.WriteString("\n\n")
+
+	// Note body.
+	content.WriteString(note.BodyMarkdown)
+
+	// Metadata table at the bottom after a divider.
 	if w.frontMatter {
-		data := frontMatterData{
-			Title:    escapeFrontMatterString(note.Name),
+		shared := "No"
+		if note.Shared {
+			shared = "Yes"
+		}
+		data := metadataData{
 			ID:       note.ID,
-			Created:  note.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			Modified: note.ModifiedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Created:  note.CreatedAt.Format("2006-01-02 15:04:05"),
+			Modified: note.ModifiedAt.Format("2006-01-02 15:04:05"),
 			Account:  note.Account,
-			Shared:   note.Shared,
+			Shared:   shared,
 		}
 
 		var buf bytes.Buffer
-		if err := frontMatterTemplate.Execute(&buf, data); err != nil {
-			return "", fmt.Errorf("rendering front matter for %q: %w", note.Name, err)
+		if err := metadataTableTemplate.Execute(&buf, data); err != nil {
+			return "", fmt.Errorf("rendering metadata for %q: %w", note.Name, err)
 		}
 		content.WriteString(buf.String())
 	}
-
-	content.WriteString(note.BodyMarkdown)
 
 	if err := os.WriteFile(fullPath, []byte(content.String()), 0644); err != nil {
 		return "", fmt.Errorf("writing note file %q: %w", fullPath, err)
@@ -247,11 +254,6 @@ func (w *FSNoteWriter) SaveAttachment(ctx context.Context, notePath string, atta
 
 	w.logger.Debug("saved attachment", zap.String("path", relPath))
 	return relPath, nil
-}
-
-// escapeFrontMatterString escapes double quotes in strings for YAML front matter.
-func escapeFrontMatterString(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
 // removeEmptyDirs walks a directory tree bottom-up and removes empty directories.

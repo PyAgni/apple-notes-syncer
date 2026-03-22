@@ -45,10 +45,16 @@ func TestFSNoteWriter_WriteNote_BasicNote(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(base, relPath))
 	require.NoError(t, err)
 
-	assert.Contains(t, string(content), "---")
-	assert.Contains(t, string(content), `title: "My Note"`)
-	assert.Contains(t, string(content), `account: "iCloud"`)
-	assert.Contains(t, string(content), "Hello world")
+	s := string(content)
+	// Title as heading at the top.
+	assert.True(t, strings.HasPrefix(s, "# My Note\n"))
+	// Body content.
+	assert.Contains(t, s, "Hello world")
+	// Metadata table at the bottom with divider.
+	assert.Contains(t, s, "\n---\n")
+	assert.Contains(t, s, "| ID | Created | Modified | Account | Shared |")
+	assert.Contains(t, s, "| x-coredata://test-id |")
+	assert.Contains(t, s, "| iCloud |")
 }
 
 func TestFSNoteWriter_WriteNote_WithSubdir(t *testing.T) {
@@ -61,7 +67,7 @@ func TestFSNoteWriter_WriteNote_WithSubdir(t *testing.T) {
 	assert.Equal(t, filepath.Join("notes", "Work", "Test.md"), relPath)
 }
 
-func TestFSNoteWriter_WriteNote_NoFrontMatter(t *testing.T) {
+func TestFSNoteWriter_WriteNote_NoMetadata(t *testing.T) {
 	w, base := newTestWriter(t, "", false)
 
 	note := newTestNote("Simple", "Notes", "Just content\n")
@@ -71,8 +77,12 @@ func TestFSNoteWriter_WriteNote_NoFrontMatter(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(base, relPath))
 	require.NoError(t, err)
 
-	assert.NotContains(t, string(content), "---")
-	assert.Equal(t, "Just content\n", string(content))
+	s := string(content)
+	// Title heading is always present.
+	assert.True(t, strings.HasPrefix(s, "# Simple\n"))
+	assert.Contains(t, s, "Just content")
+	// No metadata table.
+	assert.NotContains(t, s, "| ID |")
 }
 
 func TestFSNoteWriter_WriteNote_NestedFolders(t *testing.T) {
@@ -199,15 +209,11 @@ func TestFSNoteWriter_SaveAttachment_NilData(t *testing.T) {
 	assert.Empty(t, relPath)
 }
 
-func TestEscapeFrontMatterString(t *testing.T) {
-	assert.Equal(t, `Hello \"World\"`, escapeFrontMatterString(`Hello "World"`))
-	assert.Equal(t, "No quotes", escapeFrontMatterString("No quotes"))
-}
-
-func TestFSNoteWriter_WriteNote_FrontMatterContent(t *testing.T) {
+func TestFSNoteWriter_WriteNote_MetadataTableContent(t *testing.T) {
 	w, base := newTestWriter(t, "", true)
 
-	note := newTestNote("Title With \"Quotes\"", "Notes", "Body\n")
+	note := newTestNote("My Title", "Notes", "Body\n")
+	note.Shared = true
 	relPath, err := w.WriteNote(context.Background(), &note)
 	require.NoError(t, err)
 
@@ -215,9 +221,26 @@ func TestFSNoteWriter_WriteNote_FrontMatterContent(t *testing.T) {
 	require.NoError(t, err)
 
 	s := string(content)
-	assert.True(t, strings.HasPrefix(s, "---\n"))
-	assert.Contains(t, s, `title: "Title With \"Quotes\""`)
-	assert.Contains(t, s, "created: 2026-03-18T16:00:00Z")
-	assert.Contains(t, s, "modified: 2026-03-18T17:00:00Z")
-	assert.Contains(t, s, "shared: false")
+	// Title heading at top.
+	assert.True(t, strings.HasPrefix(s, "# My Title\n"))
+	// Body before divider.
+	assert.Contains(t, s, "Body\n")
+	// Metadata table with correct values.
+	assert.Contains(t, s, "2026-03-18 16:00:00")
+	assert.Contains(t, s, "2026-03-18 17:00:00")
+	assert.Contains(t, s, "| iCloud |")
+	assert.Contains(t, s, "| Yes |")
+}
+
+func TestFSNoteWriter_WriteNote_MetadataSharedNo(t *testing.T) {
+	w, base := newTestWriter(t, "", true)
+
+	note := newTestNote("Test", "Notes", "Content\n")
+	relPath, err := w.WriteNote(context.Background(), &note)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(base, relPath))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(content), "| No |")
 }
