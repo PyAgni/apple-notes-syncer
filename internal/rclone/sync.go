@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agni/apple-notes-sync/internal/shell"
+	"github.com/PyAgni/apple-notes-syncer/internal/shell"
 )
 
 // Syncer syncs a local directory to a cloud remote via rclone.

@@ -11,13 +11,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agni/apple-notes-sync/internal/applescript"
-	"github.com/agni/apple-notes-sync/internal/config"
-	"github.com/agni/apple-notes-sync/internal/converter"
-	"github.com/agni/apple-notes-sync/internal/filesystem"
-	"github.com/agni/apple-notes-sync/internal/gitops"
-	"github.com/agni/apple-notes-sync/internal/model"
-	"github.com/agni/apple-notes-sync/internal/rclone"
+	"github.com/PyAgni/apple-notes-syncer/internal/applescript"
+	"github.com/PyAgni/apple-notes-syncer/internal/config"
+	"github.com/PyAgni/apple-notes-syncer/internal/converter"
+	"github.com/PyAgni/apple-notes-syncer/internal/filesystem"
+	"github.com/PyAgni/apple-notes-syncer/internal/gitops"
+	"github.com/PyAgni/apple-notes-syncer/internal/model"
+	"github.com/PyAgni/apple-notes-syncer/internal/rclone"
 )
 
 // Syncer orchestrates the full Apple Notes sync pipeline.

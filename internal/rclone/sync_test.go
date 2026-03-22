@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/agni/apple-notes-sync/internal/shell"
+	"github.com/PyAgni/apple-notes-syncer/internal/shell"
 )
 
 // MockCommandExecutor is a testify mock for shell.CommandExecutor.

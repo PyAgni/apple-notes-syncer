@@ -1,17 +1,120 @@
 # apple-notes-sync
 
-A macOS CLI tool that exports Apple Notes to a Git repository as Markdown files, with optional Google Drive sync via rclone.
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-brightgreen)](#prerequisites)
+[![CI](https://github.com/PyAgni/apple-notes-syncer/actions/workflows/ci.yml/badge.svg)](https://github.com/PyAgni/apple-notes-syncer/actions)
+
+**Seamless, automatic Git backup of your Apple Notes — with optional Google Drive sync.**
+One command (or hourly launchd) turns your Notes app into a version-controlled Markdown repo.
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Why apple-notes-sync?](#why-apple-notes-sync)
+- [In Action](#in-action)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running Manually](#running-manually)
+- [Scheduling with launchd](#scheduling-with-launchd)
+- [Google Drive Setup](#google-drive-setup)
+- [How Renames and Deletions Are Handled](#how-renames-and-deletions-are-handled)
+- [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Alternatives](#alternatives)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Quick Start
+
+```bash
+# 1. Install
+go install github.com/PyAgni/apple-notes-syncer/cmd/apple-notes-sync@latest
+
+# 2. Create a Git repo for your notes
+mkdir ~/Notes && cd ~/Notes
+git init
+git remote add origin git@github.com:yourusername/my-notes.git
+git commit --allow-empty -m "init"
+git push -u origin main
+
+# 3. Configure
+cp configs/config.example.yaml ~/.apple-notes-sync.yaml
+# Edit repo_path in the config file
+
+# 4. Run
+apple-notes-sync --repo-path ~/Notes
+
+# 5. (Optional) Schedule hourly syncs
+make launchd
+```
+
+Done. Your notes now live in Git with full history.
 
 ## Features
 
 - Extracts all notes from the macOS Notes app via AppleScript
 - Converts HTML note bodies to clean Markdown
 - Mirrors the Notes folder hierarchy into the repository
-- Adds YAML front matter (title, dates, account) to each note
+- Adds a metadata table (ID, dates, account) to each note
 - Commits with timestamped messages and pushes to your remote
 - Optionally syncs to Google Drive via rclone
 - Cleans up notes that were deleted from Apple Notes
 - Configurable via CLI flags, environment variables, or YAML config file
+
+## Why apple-notes-sync?
+
+Apple Notes is great on your Mac and iPhone, but terrible for backups, version history, or migrating to Obsidian/Logseq.
+
+Other exporters are one-shot scripts. This tool gives you **continuous sync**:
+
+- **Automatic Git commits + push** — full version history of every edit
+- **Orphan cleanup** — deleted notes disappear from the repo automatically
+- **Hourly launchd scheduling** — set it and forget it
+- **rclone integration** — Google Drive as a bonus backup layer
+- **Folder mirroring** — your Notes folder structure is preserved exactly
+
+> **Note**: This is a one-way export. Edits made to the Markdown files do not flow back to Apple Notes.
+
+## In Action
+
+<!-- TODO: Add demo GIF or screenshot -->
+<!-- ![Demo](https://github.com/PyAgni/apple-notes-syncer/raw/main/assets/demo.gif) -->
+
+Example output for a single note:
+
+```markdown
+# My Project Ideas
+
+Content of the note converted to clean Markdown...
+
+- Bullet points preserved
+- [Links](https://example.com) converted properly
+- **Bold** and *italic* formatting kept
+
+---
+
+| ID | Created | Modified | Account | Shared |
+|----|---------|----------|---------|--------|
+| x-coredata://abc123 | 2026-03-18 16:00:00 | 2026-03-20 09:30:00 | iCloud | No |
+```
+
+Repository structure mirrors your Notes folders:
+
+```
+~/Notes/
+├── Work/
+│   ├── Meeting Notes.md
+│   └── Project Ideas.md
+├── Personal/
+│   ├── Travel Plans.md
+│   └── Reading List.md
+├── Recipes/
+│   └── Pasta Carbonara.md
+└── ...
+```
 
 ## Prerequisites
 
@@ -33,20 +136,7 @@ make install
 ### Using `go install`
 
 ```bash
-go install github.com/agni/apple-notes-sync/cmd/apple-notes-sync@latest
-```
-
-## One-time repo setup
-
-Create and initialize a Git repository for your notes:
-
-```bash
-mkdir ~/Notes
-cd ~/Notes
-git init
-git remote add origin git@github.com:yourusername/my-notes.git
-git commit --allow-empty -m "init"
-git push -u origin main
+go install github.com/PyAgni/apple-notes-syncer/cmd/apple-notes-sync@latest
 ```
 
 ## Configuration
@@ -57,6 +147,18 @@ Configuration is loaded from (in order of precedence):
 2. Environment variables (prefix: `ANS_`)
 3. YAML config file (`~/.apple-notes-sync.yaml`)
 4. Defaults
+
+Minimal config to get started:
+
+```yaml
+repo_path: ~/Notes
+```
+
+See [`configs/config.example.yaml`](configs/config.example.yaml) for all options. Copy it:
+
+```bash
+cp configs/config.example.yaml ~/.apple-notes-sync.yaml
+```
 
 ### CLI flags
 
@@ -80,15 +182,6 @@ export ANS_LOG_LEVEL=debug
 export ANS_RCLONE_ENABLED=true
 export ANS_RCLONE_REMOTE_NAME=gdrive
 export ANS_RCLONE_REMOTE_PATH=AppleNotes
-```
-
-### YAML config file
-
-See [`configs/config.example.yaml`](configs/config.example.yaml) for a complete reference. Copy it to get started:
-
-```bash
-cp configs/config.example.yaml ~/.apple-notes-sync.yaml
-# Edit with your settings
 ```
 
 <details>
@@ -119,7 +212,7 @@ cp configs/config.example.yaml ~/.apple-notes-sync.yaml
 | `attachments.max_size_mb` | int | `50` | Max attachment size in MB |
 | `attachments.dir` | string | `"_attachments"` | Attachment subdirectory |
 | `dry_run` | bool | `false` | Preview mode |
-| `front_matter` | bool | `true` | Add YAML front matter |
+| `front_matter` | bool | `true` | Add metadata table to notes |
 | `clean_orphans` | bool | `true` | Remove deleted notes |
 | `timeout` | duration | `120s` | AppleScript timeout |
 | `commit_template` | string | see below | Commit message Go template |
@@ -130,7 +223,7 @@ Template fields: `.Timestamp`, `.Written`, `.Total`, `.Skipped`
 
 </details>
 
-## Running manually
+## Running Manually
 
 ```bash
 # Basic run
@@ -169,7 +262,7 @@ Create the log directory:
 mkdir -p ~/Library/Logs/apple-notes-sync
 ```
 
-## Google Drive setup
+## Google Drive Setup
 
 1. Install rclone: `brew install rclone`
 
@@ -198,13 +291,42 @@ rclone:
 rclone sync ~/Notes gdrive:AppleNotes --dry-run
 ```
 
-## How renames and deletions are handled
+## How Renames and Deletions Are Handled
 
 - **Renamed notes**: A renamed note appears as a new file and the old filename is removed (if `clean_orphans: true`). This shows as a delete + add in git, which GitHub renders as a rename if content is similar.
 - **Deleted notes**: When a note is deleted from Apple Notes, the corresponding `.md` file is removed on the next sync (if `clean_orphans: true`).
 - **Moved notes**: Moving a note to a different folder creates the file in the new directory and removes it from the old one.
 
+## Limitations
+
+- **macOS only** — relies on AppleScript to access the Notes app
+- **One-way export** — edits to Markdown files do not sync back to Apple Notes
+- **AppleScript permissions required** — on first run, macOS will prompt to allow automation access
+- **Attachments >50 MB skipped** by default (configurable via `attachments.max_size_mb`)
+- **Large note libraries** may take a few minutes on the first sync (AppleScript extraction is the bottleneck)
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| AppleScript timeout | Increase `timeout: 300s` in your config |
+| Permission denied on Notes | System Settings > Privacy & Security > Automation > allow Terminal (or your terminal app) |
+| rclone OAuth expired | Run `rclone config` again to re-authenticate |
+| Unicode errors in dates | Already handled — the parser normalizes Unicode whitespace from macOS locales |
+| "repo_path is required" | Set `repo_path` in your config file or pass `--repo-path` |
+
+## Alternatives
+
+| Tool | Git auto-commit | Scheduled | rclone | Bidirectional | Language |
+|------|-----------------|-----------|--------|---------------|----------|
+| **apple-notes-sync** | Yes | Yes (launchd) | Yes | No | Go |
+| [notes2md](https://github.com/vacekj/notes2md) | No | No | No | No | Rust |
+| [apple-cloud-notes-parser](https://github.com/threeplanetssoftware/apple_cloud_notes_parser) | No | No | No | No | Ruby |
+| [Bear/Stash](https://github.com/andymatuschak/Bear-Markdown-Export) | No | No | No | No | Swift |
+
 ## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b my-feature`
@@ -217,10 +339,11 @@ rclone sync ~/Notes gdrive:AppleNotes --dry-run
 ```bash
 make build          # Build the binary
 make test           # Run tests with race detector
-make check-coverage # Run tests and check coverage ≥80%
+make check-coverage # Run tests and check coverage >= 80%
 make lint           # Run go vet + staticcheck
 make fmt            # Format code
 make tidy           # Tidy go modules
+make help           # Show all available targets
 ```
 
 ## License

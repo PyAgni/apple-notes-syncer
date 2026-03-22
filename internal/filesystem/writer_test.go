@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/agni/apple-notes-sync/internal/model"
+	"github.com/PyAgni/apple-notes-syncer/internal/model"
 )
 
 func newTestWriter(t *testing.T, subdir string, frontMatter bool) (*FSNoteWriter, string) {

@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agni/apple-notes-sync/internal/model"
-	"github.com/agni/apple-notes-sync/internal/shell"
+	"github.com/PyAgni/apple-notes-syncer/internal/model"
+	"github.com/PyAgni/apple-notes-syncer/internal/shell"
 )
 
 //go:embed scripts
