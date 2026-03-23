@@ -142,6 +142,11 @@ make install
 go install github.com/PyAgni/apple-notes-syncer/cmd/apple-notes-sync@latest
 ```
 
+> If you get `command not found: apple-notes-sync`, add Go's bin directory to your PATH:
+> ```bash
+> echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.zshrc && source ~/.zshrc
+> ```
+
 ## Configuration
 
 Configuration is loaded from (in order of precedence):
@@ -317,6 +322,7 @@ rclone sync ~/Notes gdrive:AppleNotes --dry-run
 | rclone OAuth expired | Run `rclone config` again to re-authenticate |
 | Unicode errors in dates | Already handled — the parser normalizes Unicode whitespace from macOS locales |
 | "repo_path is required" | Set `repo_path` in your config file or pass `--repo-path` |
+| `command not found: apple-notes-sync` | Add Go's bin to your PATH: `export PATH="$PATH:$(go env GOPATH)/bin"` (add to `~/.zshrc` to persist) |
 
 ## Contributing
 
