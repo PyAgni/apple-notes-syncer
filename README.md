@@ -66,15 +66,18 @@ Done. Your notes now live in Git with full history.
 
 ## Why apple-notes-sync?
 
-Apple Notes is great on your Mac and iPhone, but terrible for backups, version history, or migrating to Obsidian/Logseq.
+Apple Notes is great for writing, but getting your notes *out* is painful. There's no export-all, no API, and no version history. If you work with AI agents or just want peace of mind, that's a problem.
 
-Other exporters are one-shot scripts. This tool gives you **continuous sync**:
+I built this because I needed to feed my Apple Notes to LLMs while working on another project. Manually exporting each note was a non-starter. Now my notes live in a Git repo, and any agent — Claude Code, Hermes, or whatever comes next — can access them instantly.
 
-- **Automatic Git commits + push** — full version history of every edit
+**What you get:**
+
+- **Feed notes to AI agents** — point any tool at your GitHub repo and it has all your notes as context
+- **Version history for free** — every edit is a Git commit; accidentally delete a note and it's one `git log` away, no digging through Apple backups required
+- **Continuous sync, not a one-shot export** — schedule with launchd and forget about it
 - **Orphan cleanup** — deleted notes disappear from the repo automatically
-- **Hourly launchd scheduling** — set it and forget it
-- **rclone integration** — Google Drive as a bonus backup layer
 - **Folder mirroring** — your Notes folder structure is preserved exactly
+- **rclone integration** — Google Drive as a bonus backup layer
 
 > **Note**: This is a one-way export. Edits made to the Markdown files do not flow back to Apple Notes.
 
