@@ -83,7 +83,8 @@ I built this because I needed to feed my Apple Notes to LLMs while working on an
 
 ## In Action
 
-![Demo](./assets/demo.gif)
+<!-- TODO: Add demo GIF or screenshot -->
+<!-- ![Demo](https://github.com/PyAgni/apple-notes-syncer/raw/main/assets/demo.gif) -->
 
 Example output for a single note:
 
