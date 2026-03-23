@@ -23,6 +23,9 @@ type Attachment struct {
 	Type AttachmentType
 	// Name is the original filename or link text.
 	Name string
+	// ContentID is the Apple Notes content identifier used to reference this
+	// attachment in the note's HTML body (e.g. in cid: URLs).
+	ContentID string
 	// URL is the hyperlink for link attachments or the file path for local files.
 	URL string
 	// MIMEType is the media type (e.g. "image/png").

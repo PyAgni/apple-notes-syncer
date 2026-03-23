@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"text/template"
 	"time"
 
@@ -73,6 +76,15 @@ func (s *Syncer) Sync(ctx context.Context) (*model.SyncResult, error) {
 	}
 	result.TotalNotes = len(notes)
 
+	// Step 1.5: Resolve attachment file data from the Notes media directory.
+	if s.cfg.Attachments.Enabled {
+		s.logger.Info("resolving attachments")
+		if err := s.extractor.ResolveAttachments(ctx, notes, s.cfg.Attachments.MaxSizeMB); err != nil {
+			s.logger.Warn("failed to resolve attachments", zap.Error(err))
+			result.Errors = append(result.Errors, fmt.Errorf("resolving attachments: %w", err))
+		}
+	}
+
 	// Step 2: Apply filters (exclude folders, protected, shared).
 	notes = s.applyFilters(notes)
 
@@ -98,6 +110,14 @@ func (s *Syncer) Sync(ctx context.Context) (*model.SyncResult, error) {
 		result.WrittenNotes = len(notes) - result.SkippedNotes
 		result.Duration = time.Since(start)
 		return result, nil
+	}
+
+	// Step 4a: Save attachments as separate files and rewrite markdown
+	// references before writing the note files.
+	if s.cfg.Attachments.Enabled {
+		for i := range notes {
+			s.saveAndRewriteAttachments(ctx, &notes[i], result)
+		}
 	}
 
 	s.logger.Info("writing notes to disk")
@@ -248,6 +268,112 @@ func (s *Syncer) buildCommitMessage(result *model.SyncResult) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// dataURIImageRegex matches markdown images with data: URIs (inline base64 images).
+// Example: ![alt](data:image/png;base64,iVBOR...)
+var dataURIImageRegex = regexp.MustCompile(`!\[([^\]]*)\]\(data:[^)]+\)`)
+
+// cidImageRegex matches markdown images with cid: URIs (Apple Notes content ID references).
+// Example: ![alt](cid:ABC-123-DEF)
+var cidImageRegex = regexp.MustCompile(`!\[([^\]]*)\]\(cid:([^)]+)\)`)
+
+// saveAndRewriteAttachments saves attachment files to disk and rewrites the
+// note's markdown body to reference the saved files instead of inline data
+// or cid: URIs.
+func (s *Syncer) saveAndRewriteAttachments(ctx context.Context, note *model.Note, result *model.SyncResult) {
+	if len(note.Attachments) == 0 {
+		return
+	}
+
+	notePath := s.writer.NoteRelPath(note)
+	noteDir := filepath.Dir(notePath)
+
+	// Save each attachment and build a content ID → relative path map.
+	cidToPath := make(map[string]string)
+	var savedNames []string
+
+	for j := range note.Attachments {
+		att := &note.Attachments[j]
+		if att.Data == nil {
+			continue
+		}
+
+		savedPath, err := s.writer.SaveAttachment(ctx, notePath, att)
+		if err != nil {
+			s.logger.Warn("failed to save attachment",
+				zap.String("note", note.Name),
+				zap.String("attachment", att.Name),
+				zap.Error(err),
+			)
+			result.Errors = append(result.Errors, fmt.Errorf("saving attachment %q for note %q: %w", att.Name, note.Name, err))
+			continue
+		}
+
+		// Compute relative path from note's directory to the saved attachment.
+		relFromNote, _ := filepath.Rel(noteDir, savedPath)
+
+		if att.ContentID != "" {
+			cidToPath[att.ContentID] = relFromNote
+		}
+		savedNames = append(savedNames, relFromNote)
+		s.logger.Debug("saved attachment", zap.String("path", savedPath))
+	}
+
+	if len(savedNames) == 0 {
+		return
+	}
+
+	// Rewrite cid: references in markdown with the actual file paths.
+	md := note.BodyMarkdown
+	md = cidImageRegex.ReplaceAllStringFunc(md, func(match string) string {
+		sub := cidImageRegex.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		alt, cid := sub[1], sub[2]
+		if path, ok := cidToPath[cid]; ok {
+			return fmt.Sprintf("![%s](%s)", alt, path)
+		}
+		return match
+	})
+
+	// Replace inline data: URI images with the first available saved attachment
+	// that hasn't been mapped via cid. This handles base64-embedded images.
+	nameIdx := 0
+	md = dataURIImageRegex.ReplaceAllStringFunc(md, func(match string) string {
+		sub := dataURIImageRegex.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		alt := sub[1]
+
+		// Find the next saved attachment that wasn't already used for a cid ref.
+		for nameIdx < len(savedNames) {
+			path := savedNames[nameIdx]
+			nameIdx++
+			// Skip paths already used as cid replacements.
+			alreadyUsed := false
+			for _, v := range cidToPath {
+				if v == path {
+					alreadyUsed = true
+					break
+				}
+			}
+			if !alreadyUsed {
+				return fmt.Sprintf("![%s](%s)", alt, path)
+			}
+		}
+
+		// If we run out of saved attachments, keep the original.
+		return match
+	})
+
+	// Also replace any remaining raw data: URIs that might appear as plain
+	// links (not images) — e.g. <data:image/png;base64,...>
+	md = strings.ReplaceAll(md, "\n\n\n", "\n\n")
+
+	note.BodyMarkdown = md
 }
 
 // rcloneSync performs the rclone sync operation.

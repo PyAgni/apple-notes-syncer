@@ -4,6 +4,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -23,6 +26,11 @@ type NoteExtractor interface {
 	// If accounts is nil, all accounts are included.
 	// If folders is nil, all folders are included.
 	GetAllNotes(ctx context.Context, accounts []string, folders []string) ([]model.Note, error)
+
+	// ResolveAttachments locates attachment files in the Apple Notes media
+	// directory and populates the Data field for each attachment. Attachments
+	// larger than maxSizeMB are skipped.
+	ResolveAttachments(ctx context.Context, notes []model.Note, maxSizeMB int) error
 }
 
 // AppleScriptExtractor extracts notes from Apple Notes by executing
@@ -132,4 +140,129 @@ func toSet(items []string) map[string]bool {
 		set[item] = true
 	}
 	return set
+}
+
+// notesMediaDir is the directory where Apple Notes stores attachment files.
+const notesMediaDir = "Library/Group Containers/group.com.apple.notes"
+
+// ResolveAttachments walks the Apple Notes media directory and populates
+// attachment Data fields by matching filenames. Attachments larger than
+// maxSizeMB are skipped.
+func (e *AppleScriptExtractor) ResolveAttachments(ctx context.Context, notes []model.Note, maxSizeMB int) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("getting home directory: %w", err)
+	}
+
+	mediaRoot := filepath.Join(homeDir, notesMediaDir)
+	if _, err := os.Stat(mediaRoot); os.IsNotExist(err) {
+		e.logger.Warn("Apple Notes media directory not found", zap.String("path", mediaRoot))
+		return nil
+	}
+
+	return e.resolveAttachmentsFromDir(ctx, mediaRoot, notes, maxSizeMB)
+}
+
+// resolveAttachmentsFromDir is the core implementation of ResolveAttachments,
+// separated to allow testing with a custom directory.
+func (e *AppleScriptExtractor) resolveAttachmentsFromDir(ctx context.Context, mediaRoot string, notes []model.Note, maxSizeMB int) error {
+	fileIndex, err := buildFileIndex(ctx, mediaRoot)
+	if err != nil {
+		return fmt.Errorf("indexing Apple Notes media: %w", err)
+	}
+
+	e.logger.Debug("built attachment file index", zap.Int("files", len(fileIndex)))
+
+	maxBytes := int64(maxSizeMB) * 1024 * 1024
+	resolved := 0
+
+	for i := range notes {
+		for j := range notes[i].Attachments {
+			att := &notes[i].Attachments[j]
+			if att.Name == "" {
+				continue
+			}
+
+			paths, ok := fileIndex[att.Name]
+			if !ok || len(paths) == 0 {
+				e.logger.Debug("attachment file not found in media directory",
+					zap.String("name", att.Name),
+					zap.String("note", notes[i].Name),
+				)
+				continue
+			}
+
+			// Use the first match. If multiple exist, prefer the one matching
+			// the content identifier if possible.
+			filePath := paths[0]
+			if att.ContentID != "" && len(paths) > 1 {
+				for _, p := range paths {
+					if strings.Contains(p, att.ContentID) {
+						filePath = p
+						break
+					}
+				}
+			}
+
+			info, err := os.Stat(filePath)
+			if err != nil {
+				e.logger.Debug("cannot stat attachment file", zap.String("path", filePath), zap.Error(err))
+				continue
+			}
+
+			if info.Size() > maxBytes {
+				e.logger.Debug("skipping oversized attachment",
+					zap.String("name", att.Name),
+					zap.Int64("size_bytes", info.Size()),
+					zap.Int("max_mb", maxSizeMB),
+				)
+				continue
+			}
+
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				e.logger.Warn("failed to read attachment file",
+					zap.String("path", filePath),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			att.Data = data
+			resolved++
+		}
+	}
+
+	e.logger.Info("resolved attachments", zap.Int("count", resolved))
+	return nil
+}
+
+// buildFileIndex walks a directory tree and returns a map from filename to
+// all absolute paths where that filename exists.
+func buildFileIndex(ctx context.Context, root string) (map[string][]string, error) {
+	index := make(map[string][]string)
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip inaccessible files.
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled: %w", ctx.Err())
+		default:
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		index[info.Name()] = append(index[info.Name()], path)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking %q: %w", root, err)
+	}
+
+	return index, nil
 }

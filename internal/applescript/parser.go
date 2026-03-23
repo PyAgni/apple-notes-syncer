@@ -17,10 +17,14 @@ const (
 	noteDelimiter = "|||NOTE|||"
 	// folderDelimiter separates folder records in AppleScript output.
 	folderDelimiter = "|||FOLDER|||"
+	// attachDelimiter separates attachment records within a note's attachment field.
+	attachDelimiter = "|||ATTACH|||"
+	// attachFieldDelimiter separates fields within an attachment record.
+	attachFieldDelimiter = "|||AFIELD|||"
 )
 
 // noteFieldCount is the number of fields expected per note record.
-const noteFieldCount = 9
+const noteFieldCount = 10
 
 // folderFieldCount is the number of fields expected per folder record.
 const folderFieldCount = 4
@@ -60,15 +64,16 @@ func ParseNotesOutput(raw string) ([]model.Note, error) {
 		}
 
 		note := model.Note{
-			ID:         strings.TrimSpace(fields[0]),
-			Name:       strings.TrimSpace(fields[1]),
-			BodyHTML:   strings.TrimSpace(fields[2]),
-			FolderPath: strings.TrimSpace(fields[6]),
-			Account:    strings.TrimSpace(fields[5]),
-			CreatedAt:  createdAt,
-			ModifiedAt: modifiedAt,
-			Protected:  strings.TrimSpace(fields[7]) == "true",
-			Shared:     strings.TrimSpace(fields[8]) == "true",
+			ID:          strings.TrimSpace(fields[0]),
+			Name:        strings.TrimSpace(fields[1]),
+			BodyHTML:    strings.TrimSpace(fields[2]),
+			FolderPath:  strings.TrimSpace(fields[6]),
+			Account:     strings.TrimSpace(fields[5]),
+			CreatedAt:   createdAt,
+			ModifiedAt:  modifiedAt,
+			Protected:   strings.TrimSpace(fields[7]) == "true",
+			Shared:      strings.TrimSpace(fields[8]) == "true",
+			Attachments: parseAttachments(strings.TrimSpace(fields[9])),
 		}
 
 		notes = append(notes, note)
@@ -175,6 +180,61 @@ func normalizeWhitespace(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// parseAttachments parses the attachment field from AppleScript output into
+// Attachment structs. Each attachment has name and content identifier separated
+// by attachFieldDelimiter, and multiple attachments are separated by attachDelimiter.
+func parseAttachments(raw string) []model.Attachment {
+	if raw == "" {
+		return nil
+	}
+
+	records := strings.Split(raw, attachDelimiter)
+	var attachments []model.Attachment
+
+	for _, record := range records {
+		record = strings.TrimSpace(record)
+		if record == "" {
+			continue
+		}
+
+		fields := strings.Split(record, attachFieldDelimiter)
+		if len(fields) < 1 {
+			continue
+		}
+
+		att := model.Attachment{
+			Name: strings.TrimSpace(fields[0]),
+		}
+		if len(fields) >= 2 {
+			att.ContentID = strings.TrimSpace(fields[1])
+		}
+
+		// Infer type from file extension.
+		att.Type = inferAttachmentType(att.Name)
+
+		attachments = append(attachments, att)
+	}
+
+	return attachments
+}
+
+// inferAttachmentType guesses the attachment type from the file extension.
+func inferAttachmentType(name string) model.AttachmentType {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"),
+		strings.HasSuffix(lower, ".png"), strings.HasSuffix(lower, ".gif"),
+		strings.HasSuffix(lower, ".heic"), strings.HasSuffix(lower, ".webp"),
+		strings.HasSuffix(lower, ".tiff"), strings.HasSuffix(lower, ".bmp"):
+		return model.AttachmentImage
+	case strings.HasSuffix(lower, ".mp4"), strings.HasSuffix(lower, ".mov"),
+		strings.HasSuffix(lower, ".m4v"), strings.HasSuffix(lower, ".avi"):
+		return model.AttachmentVideo
+	default:
+		return model.AttachmentFile
+	}
 }
 
 // truncate shortens a string to maxLen characters for display in error messages.
