@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,11 @@ func (m *mockWriter) CleanOrphanedFiles(ctx context.Context, currentNotePaths []
 func (m *mockWriter) SaveAttachment(ctx context.Context, notePath string, attachment *model.Attachment) (string, error) {
 	args := m.Called(ctx, notePath, attachment)
 	return args.String(0), args.Error(1)
+}
+
+func (m *mockWriter) NoteRelPath(note *model.Note) string {
+	args := m.Called(note)
+	return args.String(0)
 }
 
 type mockGit struct{ mock.Mock }
@@ -467,16 +473,97 @@ func TestSyncer_Sync_WithAttachments(t *testing.T) {
 
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
 	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
-	conv.On("Convert", mock.Anything).Return("body\n", nil)
+	conv.On("Convert", mock.Anything).Return("![image](cid:CID-123)\n", nil)
+	wr.On("NoteRelPath", mock.Anything).Return("Notes/Note With Image.md")
+	wr.On("SaveAttachment", mock.Anything, "Notes/Note With Image.md", mock.Anything).Return("Notes/_attachments/photo.jpg", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"Notes/Note With Image.md"}, nil)
-	wr.On("SaveAttachment", mock.Anything, "Notes/Note With Image.md", &notes[0].Attachments[0]).Return("Notes/_attachments/photo.jpg", nil)
 	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
 
 	result, err := s.Sync(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, result.Errors)
 
-	wr.AssertCalled(t, "SaveAttachment", mock.Anything, "Notes/Note With Image.md", &notes[0].Attachments[0])
+	// Attachment should be saved before WriteAll.
+	wr.AssertCalled(t, "SaveAttachment", mock.Anything, "Notes/Note With Image.md", mock.Anything)
+}
+
+func TestSyncer_Sync_AttachmentRewritesCidRefs(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Git.Enabled = false
+	ext := new(mockExtractor)
+	conv := new(mockConverter)
+	wr := new(mockWriter)
+	git := new(mockGit)
+	rc := new(mockRclone)
+
+	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
+
+	notes := []model.Note{
+		{
+			ID: "1", Name: "Image Note", BodyHTML: "<p>body</p>",
+			FolderPath: "Notes", Account: "iCloud",
+			CreatedAt: time.Now(), ModifiedAt: time.Now(),
+			Attachments: []model.Attachment{
+				{Name: "pic.png", ContentID: "ABC-123", Data: []byte("png-data")},
+			},
+		},
+	}
+
+	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
+	conv.On("Convert", mock.Anything).Return("Some text\n\n![photo](cid:ABC-123)\n\nMore text\n", nil)
+	wr.On("NoteRelPath", mock.Anything).Return("Notes/Image Note.md")
+	wr.On("SaveAttachment", mock.Anything, "Notes/Image Note.md", mock.Anything).Return("Notes/_attachments/pic.png", nil)
+	wr.On("WriteAll", mock.Anything, mock.MatchedBy(func(notes []model.Note) bool {
+		// The cid: reference should have been rewritten to the attachment path.
+		return strings.Contains(notes[0].BodyMarkdown, "_attachments/pic.png") &&
+			!strings.Contains(notes[0].BodyMarkdown, "cid:")
+	})).Return([]string{"Notes/Image Note.md"}, nil)
+	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
+
+	result, err := s.Sync(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, result.Errors)
+	wr.AssertExpectations(t)
+}
+
+func TestSyncer_Sync_AttachmentRewritesDataURI(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Git.Enabled = false
+	ext := new(mockExtractor)
+	conv := new(mockConverter)
+	wr := new(mockWriter)
+	git := new(mockGit)
+	rc := new(mockRclone)
+
+	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
+
+	notes := []model.Note{
+		{
+			ID: "1", Name: "Data URI Note", BodyHTML: "<p>body</p>",
+			FolderPath: "Work", Account: "iCloud",
+			CreatedAt: time.Now(), ModifiedAt: time.Now(),
+			Attachments: []model.Attachment{
+				{Name: "screenshot.png", Data: []byte("png-data")},
+			},
+		},
+	}
+
+	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
+	conv.On("Convert", mock.Anything).Return("Text\n\n![](data:image/png;base64,aVeryLongBase64String)\n", nil)
+	wr.On("NoteRelPath", mock.Anything).Return("Work/Data URI Note.md")
+	wr.On("SaveAttachment", mock.Anything, "Work/Data URI Note.md", mock.Anything).Return("Work/_attachments/screenshot.png", nil)
+	wr.On("WriteAll", mock.Anything, mock.MatchedBy(func(notes []model.Note) bool {
+		return strings.Contains(notes[0].BodyMarkdown, "_attachments/screenshot.png") &&
+			!strings.Contains(notes[0].BodyMarkdown, "data:image")
+	})).Return([]string{"Work/Data URI Note.md"}, nil)
+	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
+
+	result, err := s.Sync(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, result.Errors)
+	wr.AssertExpectations(t)
 }
 
 func TestSyncer_Sync_AttachmentsDisabled(t *testing.T) {

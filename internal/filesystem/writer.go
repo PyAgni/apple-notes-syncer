@@ -5,6 +5,7 @@ package filesystem
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,10 @@ type NoteWriter interface {
 	// SaveAttachment writes an attachment to disk alongside its note.
 	// Returns the relative file path of the saved attachment.
 	SaveAttachment(ctx context.Context, notePath string, attachment *model.Attachment) (string, error)
+
+	// NoteRelPath returns the relative path a note would be written to,
+	// without writing the file. Used to pre-compute paths for attachment saving.
+	NoteRelPath(note *model.Note) string
 }
 
 // FSNoteWriter is the real filesystem implementation of NoteWriter.
@@ -101,6 +106,10 @@ func (w *FSNoteWriter) WriteNote(ctx context.Context, note *model.Note) (string,
 	fileName := note.SanitizedFileName() + ".md"
 	fullPath := filepath.Join(dirPath, fileName)
 
+	// Extract inline base64 images from markdown body, save them as files,
+	// and replace with relative paths.
+	bodyMarkdown := w.extractInlineImages(dirPath, note.BodyMarkdown)
+
 	// Build file content: title heading, body, then metadata table at bottom.
 	var content strings.Builder
 
@@ -110,7 +119,7 @@ func (w *FSNoteWriter) WriteNote(ctx context.Context, note *model.Note) (string,
 	content.WriteString("\n\n")
 
 	// Note body.
-	content.WriteString(note.BodyMarkdown)
+	content.WriteString(bodyMarkdown)
 
 	// Metadata table at the bottom after a divider.
 	if w.frontMatter {
@@ -158,6 +167,17 @@ func (w *FSNoteWriter) WriteAll(ctx context.Context, notes []model.Note) ([]stri
 		paths = append(paths, relPath)
 	}
 	return paths, nil
+}
+
+// NoteRelPath returns the relative path a note would be written to,
+// without actually writing the file. Used to compute attachment paths
+// before the note is written.
+func (w *FSNoteWriter) NoteRelPath(note *model.Note) string {
+	dirPath := filepath.Join(w.notesDir(), filepath.FromSlash(note.FolderPath))
+	fileName := note.SanitizedFileName() + ".md"
+	fullPath := filepath.Join(dirPath, fileName)
+	relPath, _ := filepath.Rel(w.basePath, fullPath)
+	return relPath
 }
 
 // CleanOrphanedFiles removes .md files that are not in the currentNotePaths set.
@@ -254,6 +274,117 @@ func (w *FSNoteWriter) SaveAttachment(ctx context.Context, notePath string, atta
 
 	w.logger.Debug("saved attachment", zap.String("path", relPath))
 	return relPath, nil
+}
+
+// dataURIPrefix is the marker we scan for to find inline base64 images.
+const dataURIPrefix = "](data:image/"
+
+// extractInlineImages finds base64-encoded data URI images in the markdown,
+// saves each as a file in the _attachments subdirectory, and returns the
+// markdown with data URIs replaced by relative file paths.
+//
+// Uses string scanning instead of regex because base64 payloads can be
+// millions of characters, which causes regex backtracking issues.
+func (w *FSNoteWriter) extractInlineImages(noteDir string, markdown string) string {
+	if !strings.Contains(markdown, dataURIPrefix) {
+		return markdown
+	}
+
+	var buf strings.Builder
+	buf.Grow(len(markdown) / 2) // Result will be much smaller.
+	imageCount := 0
+	pos := 0
+
+	for pos < len(markdown) {
+		// Find the next "](data:image/" marker.
+		idx := strings.Index(markdown[pos:], dataURIPrefix)
+		if idx == -1 {
+			buf.WriteString(markdown[pos:])
+			break
+		}
+
+		markerStart := pos + idx // Position of "]" in "](data:image/..."
+
+		// Find the "![" that starts this image tag by scanning backwards.
+		imgStart := strings.LastIndex(markdown[pos:markerStart], "![")
+		if imgStart == -1 {
+			// No opening "![" found, write up to past the marker and continue.
+			buf.WriteString(markdown[pos : markerStart+len(dataURIPrefix)])
+			pos = markerStart + len(dataURIPrefix)
+			continue
+		}
+		imgStart += pos // Convert to absolute position.
+
+		// Extract alt text from ![alt].
+		altEnd := markerStart
+		alt := markdown[imgStart+2 : altEnd]
+
+		// Extract image type: "](data:image/TYPE;base64,DATA)"
+		// Find ";base64," after the marker.
+		afterMarker := markerStart + 2 // Skip "]("
+		semicolonIdx := strings.Index(markdown[afterMarker:], ";base64,")
+		if semicolonIdx == -1 {
+			buf.WriteString(markdown[pos : markerStart+len(dataURIPrefix)])
+			pos = markerStart + len(dataURIPrefix)
+			continue
+		}
+		ext := markdown[afterMarker+len("data:image/") : afterMarker+semicolonIdx]
+
+		// Find the closing ")" — the base64 data runs until the next ")".
+		b64Start := afterMarker + semicolonIdx + len(";base64,")
+		closeParen := strings.Index(markdown[b64Start:], ")")
+		if closeParen == -1 {
+			buf.WriteString(markdown[pos : markerStart+len(dataURIPrefix)])
+			pos = markerStart + len(dataURIPrefix)
+			continue
+		}
+
+		b64data := markdown[b64Start : b64Start+closeParen]
+		fullEnd := b64Start + closeParen + 1 // Past the ")"
+
+		// Write everything before this image tag.
+		buf.WriteString(markdown[pos:imgStart])
+
+		// Decode and save.
+		data, err := base64.StdEncoding.DecodeString(b64data)
+		if err != nil {
+			w.logger.Debug("failed to decode base64 image", zap.Error(err))
+			buf.WriteString(markdown[imgStart:fullEnd])
+			pos = fullEnd
+			continue
+		}
+
+		attachDir := filepath.Join(noteDir, w.attachmentDir)
+		if err := os.MkdirAll(attachDir, 0755); err != nil {
+			w.logger.Debug("failed to create attachment dir", zap.Error(err))
+			buf.WriteString(markdown[imgStart:fullEnd])
+			pos = fullEnd
+			continue
+		}
+
+		imageCount++
+		fileName := fmt.Sprintf("image_%d.%s", imageCount, ext)
+		filePath := filepath.Join(attachDir, fileName)
+
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			w.logger.Debug("failed to write inline image", zap.String("path", filePath), zap.Error(err))
+			buf.WriteString(markdown[imgStart:fullEnd])
+			pos = fullEnd
+			continue
+		}
+
+		w.logger.Debug("extracted inline image",
+			zap.String("path", filePath),
+			zap.Int("bytes", len(data)),
+		)
+
+		// Write the replacement markdown.
+		relPath := filepath.Join(w.attachmentDir, fileName)
+		fmt.Fprintf(&buf, "![%s](%s)", alt, relPath)
+		pos = fullEnd
+	}
+
+	return buf.String()
 }
 
 // removeEmptyDirs walks a directory tree bottom-up and removes empty directories.
