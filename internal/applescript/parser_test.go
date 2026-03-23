@@ -5,10 +5,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/PyAgni/apple-notes-syncer/internal/model"
 )
 
 func TestParseNotesOutput_SingleNote(t *testing.T) {
-	raw := "x-coredata://123|||FIELD|||My Note|||FIELD|||<div><h1>My Note</h1></div>|||FIELD|||Monday, March 18, 2026 at 4:39:41 PM|||FIELD|||Monday, March 18, 2026 at 4:40:05 PM|||FIELD|||iCloud|||FIELD|||Notes|||FIELD|||false|||FIELD|||false|||NOTE|||"
+	raw := "x-coredata://123|||FIELD|||My Note|||FIELD|||<div><h1>My Note</h1></div>|||FIELD|||Monday, March 18, 2026 at 4:39:41 PM|||FIELD|||Monday, March 18, 2026 at 4:40:05 PM|||FIELD|||iCloud|||FIELD|||Notes|||FIELD|||false|||FIELD|||false|||FIELD||||||NOTE|||"
 
 	notes, err := ParseNotesOutput(raw)
 	require.NoError(t, err)
@@ -23,11 +25,12 @@ func TestParseNotesOutput_SingleNote(t *testing.T) {
 	assert.False(t, notes[0].Shared)
 	assert.Equal(t, 2026, notes[0].CreatedAt.Year())
 	assert.Equal(t, 2026, notes[0].ModifiedAt.Year())
+	assert.Empty(t, notes[0].Attachments)
 }
 
 func TestParseNotesOutput_MultipleNotes(t *testing.T) {
-	raw := "id1|||FIELD|||Note 1|||FIELD|||<p>body1</p>|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Work|||FIELD|||false|||FIELD|||false|||NOTE|||" +
-		"id2|||FIELD|||Note 2|||FIELD|||<p>body2</p>|||FIELD|||Tuesday, January 2, 2026 at 11:00:00 AM|||FIELD|||Tuesday, January 2, 2026 at 11:00:00 AM|||FIELD|||Gmail|||FIELD|||Personal|||FIELD|||true|||FIELD|||true|||NOTE|||"
+	raw := "id1|||FIELD|||Note 1|||FIELD|||<p>body1</p>|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Work|||FIELD|||false|||FIELD|||false|||FIELD||||||NOTE|||" +
+		"id2|||FIELD|||Note 2|||FIELD|||<p>body2</p>|||FIELD|||Tuesday, January 2, 2026 at 11:00:00 AM|||FIELD|||Tuesday, January 2, 2026 at 11:00:00 AM|||FIELD|||Gmail|||FIELD|||Personal|||FIELD|||true|||FIELD|||true|||FIELD||||||NOTE|||"
 
 	notes, err := ParseNotesOutput(raw)
 	require.NoError(t, err)
@@ -59,18 +62,18 @@ func TestParseNotesOutput_InvalidFieldCount(t *testing.T) {
 	raw := "id|||FIELD|||name|||FIELD|||body|||NOTE|||"
 	_, err := ParseNotesOutput(raw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected 9 fields")
+	assert.Contains(t, err.Error(), "expected 10 fields")
 }
 
 func TestParseNotesOutput_InvalidDate(t *testing.T) {
-	raw := "id1|||FIELD|||Note|||FIELD|||<p>body</p>|||FIELD|||not-a-date|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Notes|||FIELD|||false|||FIELD|||false|||NOTE|||"
+	raw := "id1|||FIELD|||Note|||FIELD|||<p>body</p>|||FIELD|||not-a-date|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Notes|||FIELD|||false|||FIELD|||false|||FIELD||||||NOTE|||"
 	_, err := ParseNotesOutput(raw)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing creation date")
 }
 
 func TestParseNotesOutput_ProtectedNote(t *testing.T) {
-	raw := "id1|||FIELD|||Secret|||FIELD||||||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Private|||FIELD|||true|||FIELD|||false|||NOTE|||"
+	raw := "id1|||FIELD|||Secret|||FIELD||||||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Private|||FIELD|||true|||FIELD|||false|||FIELD||||||NOTE|||"
 
 	notes, err := ParseNotesOutput(raw)
 	require.NoError(t, err)
@@ -82,7 +85,7 @@ func TestParseNotesOutput_ProtectedNote(t *testing.T) {
 }
 
 func TestParseNotesOutput_NestedFolderPath(t *testing.T) {
-	raw := "id1|||FIELD|||Note|||FIELD|||<p>body</p>|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Work/Projects/Go|||FIELD|||false|||FIELD|||false|||NOTE|||"
+	raw := "id1|||FIELD|||Note|||FIELD|||<p>body</p>|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Work/Projects/Go|||FIELD|||false|||FIELD|||false|||FIELD||||||NOTE|||"
 
 	notes, err := ParseNotesOutput(raw)
 	require.NoError(t, err)
@@ -201,6 +204,63 @@ func TestParseAppleScriptDate_InvalidFormat(t *testing.T) {
 	_, err := ParseAppleScriptDate("not a date at all")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no matching format found")
+}
+
+func TestParseNotesOutput_WithAttachments(t *testing.T) {
+	raw := "id1|||FIELD|||Note|||FIELD|||<p>body</p>|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||Monday, January 1, 2026 at 10:00:00 AM|||FIELD|||iCloud|||FIELD|||Notes|||FIELD|||false|||FIELD|||false|||FIELD|||photo.jpg|||AFIELD|||ABC-123|||ATTACH|||doc.pdf|||AFIELD|||DEF-456|||NOTE|||"
+
+	notes, err := ParseNotesOutput(raw)
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	require.Len(t, notes[0].Attachments, 2)
+
+	assert.Equal(t, "photo.jpg", notes[0].Attachments[0].Name)
+	assert.Equal(t, "ABC-123", notes[0].Attachments[0].ContentID)
+	assert.Equal(t, model.AttachmentImage, notes[0].Attachments[0].Type)
+
+	assert.Equal(t, "doc.pdf", notes[0].Attachments[1].Name)
+	assert.Equal(t, "DEF-456", notes[0].Attachments[1].ContentID)
+	assert.Equal(t, model.AttachmentFile, notes[0].Attachments[1].Type)
+}
+
+func TestParseAttachments_Empty(t *testing.T) {
+	result := parseAttachments("")
+	assert.Nil(t, result)
+}
+
+func TestParseAttachments_Single(t *testing.T) {
+	result := parseAttachments("image.png|||AFIELD|||CID-123")
+	require.Len(t, result, 1)
+	assert.Equal(t, "image.png", result[0].Name)
+	assert.Equal(t, "CID-123", result[0].ContentID)
+	assert.Equal(t, model.AttachmentImage, result[0].Type)
+}
+
+func TestParseAttachments_Multiple(t *testing.T) {
+	result := parseAttachments("a.jpg|||AFIELD|||cid1|||ATTACH|||b.mov|||AFIELD|||cid2")
+	require.Len(t, result, 2)
+	assert.Equal(t, model.AttachmentImage, result[0].Type)
+	assert.Equal(t, model.AttachmentVideo, result[1].Type)
+}
+
+func TestInferAttachmentType(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected model.AttachmentType
+	}{
+		{"photo.jpg", model.AttachmentImage},
+		{"PHOTO.JPEG", model.AttachmentImage},
+		{"image.png", model.AttachmentImage},
+		{"pic.heic", model.AttachmentImage},
+		{"video.mp4", model.AttachmentVideo},
+		{"clip.mov", model.AttachmentVideo},
+		{"document.pdf", model.AttachmentFile},
+		{"notes.txt", model.AttachmentFile},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, inferAttachmentType(tt.name), tt.name)
+	}
 }
 
 func TestTruncate(t *testing.T) {

@@ -28,6 +28,11 @@ func (m *mockExtractor) GetAllNotes(ctx context.Context, accounts []string, fold
 	return args.Get(0).([]model.Note), args.Error(1)
 }
 
+func (m *mockExtractor) ResolveAttachments(ctx context.Context, notes []model.Note, maxSizeMB int) error {
+	args := m.Called(ctx, notes, maxSizeMB)
+	return args.Error(0)
+}
+
 type mockConverter struct{ mock.Mock }
 
 func (m *mockConverter) Convert(html string) (string, error) {
@@ -112,6 +117,11 @@ func defaultConfig() *config.Config {
 			ExcludeFolders: []string{"Recently Deleted"},
 			SkipProtected:  true,
 		},
+		Attachments: config.AttachmentConfig{
+			Enabled:   true,
+			MaxSizeMB: 50,
+			Dir:       "_attachments",
+		},
 	}
 }
 
@@ -145,6 +155,7 @@ func TestSyncer_Sync_FullPipeline(t *testing.T) {
 	notes := testNotes()
 
 	ext.On("GetAllNotes", mock.Anything, []string(nil), []string(nil)).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", "<p>body1</p>").Return("body1\n", nil)
 	conv.On("Convert", "<p>body2</p>").Return("body2\n", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"Notes/Note 1.md", "Work/Note 2.md"}, nil)
@@ -182,6 +193,7 @@ func TestSyncer_Sync_DryRun(t *testing.T) {
 
 	notes := testNotes()
 	ext.On("GetAllNotes", mock.Anything, []string(nil), []string(nil)).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", mock.Anything).Return("markdown\n", nil)
 
 	result, err := s.Sync(context.Background())
@@ -206,6 +218,7 @@ func TestSyncer_Sync_NoChanges(t *testing.T) {
 
 	notes := testNotes()
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", mock.Anything).Return("md\n", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"a.md", "b.md"}, nil)
 	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
@@ -233,6 +246,7 @@ func TestSyncer_Sync_GitDisabled(t *testing.T) {
 	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
 
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(testNotes(), nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", mock.Anything).Return("md\n", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"a.md"}, nil)
 	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
@@ -258,6 +272,7 @@ func TestSyncer_Sync_WithRclone(t *testing.T) {
 	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
 
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(testNotes(), nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", mock.Anything).Return("md\n", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"a.md"}, nil)
 	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
@@ -377,6 +392,7 @@ func TestSyncer_Sync_PushDisabled(t *testing.T) {
 	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
 
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(testNotes(), nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", mock.Anything).Return("md\n", nil)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"a.md"}, nil)
 	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
@@ -408,6 +424,7 @@ func TestSyncer_Sync_ConvertError_NonFatal(t *testing.T) {
 	}
 
 	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
 	conv.On("Convert", "<p>ok</p>").Return("ok\n", nil)
 	conv.On("Convert", "<p>broken</p>").Return("", assert.AnError)
 	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"Notes/Good.md", "Notes/Bad.md"}, nil)
@@ -424,4 +441,66 @@ func TestSyncer_Sync_ConvertError_NonFatal(t *testing.T) {
 	// One conversion error is non-fatal.
 	assert.Len(t, result.Errors, 1)
 	assert.Contains(t, result.Errors[0].Error(), "converting note")
+}
+
+func TestSyncer_Sync_WithAttachments(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Git.Enabled = false
+	ext := new(mockExtractor)
+	conv := new(mockConverter)
+	wr := new(mockWriter)
+	git := new(mockGit)
+	rc := new(mockRclone)
+
+	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
+
+	notes := []model.Note{
+		{
+			ID: "1", Name: "Note With Image", BodyHTML: "<p>body</p>",
+			FolderPath: "Notes", Account: "iCloud",
+			CreatedAt: time.Now(), ModifiedAt: time.Now(),
+			Attachments: []model.Attachment{
+				{Name: "photo.jpg", ContentID: "CID-123", Type: model.AttachmentImage, Data: []byte("fake-image-data")},
+			},
+		},
+	}
+
+	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(notes, nil)
+	ext.On("ResolveAttachments", mock.Anything, mock.Anything, 50).Return(nil)
+	conv.On("Convert", mock.Anything).Return("body\n", nil)
+	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"Notes/Note With Image.md"}, nil)
+	wr.On("SaveAttachment", mock.Anything, "Notes/Note With Image.md", &notes[0].Attachments[0]).Return("Notes/_attachments/photo.jpg", nil)
+	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
+
+	result, err := s.Sync(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, result.Errors)
+
+	wr.AssertCalled(t, "SaveAttachment", mock.Anything, "Notes/Note With Image.md", &notes[0].Attachments[0])
+}
+
+func TestSyncer_Sync_AttachmentsDisabled(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Attachments.Enabled = false
+	cfg.Git.Enabled = false
+	ext := new(mockExtractor)
+	conv := new(mockConverter)
+	wr := new(mockWriter)
+	git := new(mockGit)
+	rc := new(mockRclone)
+
+	s := NewSyncer(cfg, ext, conv, wr, git, rc, zap.NewNop())
+
+	ext.On("GetAllNotes", mock.Anything, mock.Anything, mock.Anything).Return(testNotes(), nil)
+	conv.On("Convert", mock.Anything).Return("md\n", nil)
+	wr.On("WriteAll", mock.Anything, mock.Anything).Return([]string{"a.md", "b.md"}, nil)
+	wr.On("CleanOrphanedFiles", mock.Anything, mock.Anything).Return([]string{}, nil)
+
+	result, err := s.Sync(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, result.Errors)
+
+	// ResolveAttachments and SaveAttachment should NOT be called when disabled.
+	ext.AssertNotCalled(t, "ResolveAttachments")
+	wr.AssertNotCalled(t, "SaveAttachment")
 }

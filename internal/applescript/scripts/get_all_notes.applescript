@@ -1,10 +1,13 @@
 -- get_all_notes.applescript
 -- Extracts all notes from Apple Notes.
 -- Output format: fields separated by |||FIELD|||, records separated by |||NOTE|||
--- Fields: id, name, body, creation_date, modification_date, account, folder_path, password_protected, shared
+-- Fields: id, name, body, creation_date, modification_date, account, folder_path, password_protected, shared, attachments
+-- Attachments field: name|||AFIELD|||content_identifier per attachment, separated by |||ATTACH|||
 
 set fieldSep to "|||FIELD|||"
 set recSep to "|||NOTE|||"
+set attachSep to "|||ATTACH|||"
+set attachFieldSep to "|||AFIELD|||"
 set output to ""
 
 tell application "Notes"
@@ -38,7 +41,24 @@ tell application "Notes"
 				set noteProtected to password protected of n as text
 				set noteShared to shared of n as text
 
-				set output to output & noteID & fieldSep & noteName & fieldSep & noteBody & fieldSep & noteCreated & fieldSep & noteModified & fieldSep & acctName & fieldSep & fullPath & fieldSep & noteProtected & fieldSep & noteShared & recSep
+				-- Extract attachment metadata.
+				set attachInfo to ""
+				try
+					set noteAttachments to attachments of n
+					repeat with att in noteAttachments
+						set attName to name of att
+						set attCID to ""
+						try
+							set attCID to content identifier of att
+						end try
+						if attachInfo is not "" then
+							set attachInfo to attachInfo & attachSep
+						end if
+						set attachInfo to attachInfo & attName & attachFieldSep & attCID
+					end repeat
+				end try
+
+				set output to output & noteID & fieldSep & noteName & fieldSep & noteBody & fieldSep & noteCreated & fieldSep & noteModified & fieldSep & acctName & fieldSep & fullPath & fieldSep & noteProtected & fieldSep & noteShared & fieldSep & attachInfo & recSep
 			end repeat
 		end repeat
 	end repeat

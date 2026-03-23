@@ -73,6 +73,15 @@ func (s *Syncer) Sync(ctx context.Context) (*model.SyncResult, error) {
 	}
 	result.TotalNotes = len(notes)
 
+	// Step 1.5: Resolve attachment file data from the Notes media directory.
+	if s.cfg.Attachments.Enabled {
+		s.logger.Info("resolving attachments")
+		if err := s.extractor.ResolveAttachments(ctx, notes, s.cfg.Attachments.MaxSizeMB); err != nil {
+			s.logger.Warn("failed to resolve attachments", zap.Error(err))
+			result.Errors = append(result.Errors, fmt.Errorf("resolving attachments: %w", err))
+		}
+	}
+
 	// Step 2: Apply filters (exclude folders, protected, shared).
 	notes = s.applyFilters(notes)
 
@@ -107,6 +116,29 @@ func (s *Syncer) Sync(ctx context.Context) (*model.SyncResult, error) {
 	}
 	result.WrittenNotes = len(writtenPaths)
 	result.SkippedNotes = result.TotalNotes - result.WrittenNotes
+
+	// Step 4.5: Save attachments for written notes.
+	if s.cfg.Attachments.Enabled {
+		for i, notePath := range writtenPaths {
+			for j := range notes[i].Attachments {
+				att := &notes[i].Attachments[j]
+				if att.Data == nil {
+					continue
+				}
+				savedPath, err := s.writer.SaveAttachment(ctx, notePath, att)
+				if err != nil {
+					s.logger.Warn("failed to save attachment",
+						zap.String("note", notes[i].Name),
+						zap.String("attachment", att.Name),
+						zap.Error(err),
+					)
+					result.Errors = append(result.Errors, fmt.Errorf("saving attachment %q for note %q: %w", att.Name, notes[i].Name, err))
+					continue
+				}
+				s.logger.Debug("saved attachment", zap.String("path", savedPath))
+			}
+		}
+	}
 
 	// Step 5: Clean orphaned files.
 	if s.cfg.CleanOrphans {
